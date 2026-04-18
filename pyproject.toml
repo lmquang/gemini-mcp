@@ -1,0 +1,17 @@
+[project]
+name = "gemini-mcp"
+version = "0.1.0"
+description = "Best UX Gemini CLI MCP Wrapper"
+dependencies = [
+    "fastmcp>=3.2.4",
+    "fastmcp[tasks]",
+]
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.scripts]
+gemini-mcp = "gemini_mcp.server:main"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

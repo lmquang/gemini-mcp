@@ -1,0 +1,85 @@
+"""Gemini Expert Assistant MCP Server."""
+
+from gemini_mcp.exceptions import (
+    GeminiError,
+    GeminiAuthError,
+    GeminiTimeoutError,
+    GeminiRateLimitError,
+)
+from gemini_mcp.config import (
+    AVAILABLE_MODELS,
+    MODEL_TIERS,
+    DEFAULT_TIMEOUT_SECONDS,
+    DEFAULT_READ_TIMEOUT,
+)
+from gemini_mcp.parsers import (
+    parse_stream_json,
+    extract_touched_paths,
+    extract_session_id,
+    parse_and_summarize,
+    classify_error,
+)
+from gemini_mcp.runner import (
+    build_isolated_settings,
+    build_managed_session_key,
+    clear_managed_session,
+    discover_session_id,
+    get_context_session_identifier,
+    get_most_recent_session_id,
+    resolve_managed_session,
+    store_managed_session,
+    setup_isolated_home,
+    load_persisted_chat_sessions,
+    merge_session_sources,
+    run_gemini_cli,
+    run_with_fallback,
+    run_agentic_tool,
+    parse_session_listing,
+    resolve_session_reference_value,
+    list_gemini_sessions,
+)
+from gemini_mcp.jobs import (
+    JobManager,
+    JobStatus,
+    Job,
+    job_manager,
+)
+from gemini_mcp.tools import mcp
+
+__all__ = [
+    "GeminiError",
+    "GeminiAuthError",
+    "GeminiTimeoutError",
+    "GeminiRateLimitError",
+    "AVAILABLE_MODELS",
+    "MODEL_TIERS",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "DEFAULT_READ_TIMEOUT",
+    "parse_stream_json",
+    "extract_touched_paths",
+    "extract_session_id",
+    "parse_and_summarize",
+    "classify_error",
+    "build_isolated_settings",
+    "build_managed_session_key",
+    "clear_managed_session",
+    "discover_session_id",
+    "get_context_session_identifier",
+    "get_most_recent_session_id",
+    "resolve_managed_session",
+    "store_managed_session",
+    "setup_isolated_home",
+    "load_persisted_chat_sessions",
+    "merge_session_sources",
+    "run_gemini_cli",
+    "run_with_fallback",
+    "run_agentic_tool",
+    "parse_session_listing",
+    "resolve_session_reference_value",
+    "list_gemini_sessions",
+    "JobManager",
+    "JobStatus",
+    "Job",
+    "job_manager",
+    "mcp",
+]
