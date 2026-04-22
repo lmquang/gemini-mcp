@@ -197,10 +197,12 @@ def test_build_result_markdown_includes_collapsible_reasoning(tmp_path):
     md = manager._build_result_markdown(job)
     assert "## Final Answer" in md
     assert "The issue is in module X." in md
-    assert "<details>" in md
-    assert "<summary>Reasoning Trace</summary>" in md
-    assert "Step 1: Looked at code" in md
-    assert "</details>" in md
+    assert "Reasoning Trace" not in md
+
+    reasoning_md = manager._build_reasoning_markdown(job)
+    assert "# analyze Reasoning Trace:" in reasoning_md
+    assert "Step 1: Looked at code" in reasoning_md
+    assert "Step 2: Found the issue" in reasoning_md
 
 
 def test_build_result_markdown_no_reasoning_no_details(tmp_path):
@@ -213,7 +215,7 @@ def test_build_result_markdown_no_reasoning_no_details(tmp_path):
     md = manager._build_result_markdown(job)
     assert "## Final Answer" in md
     assert "Clean answer only." in md
-    assert "<details>" not in md
+    assert "Reasoning Trace" not in md
 
 
 def test_build_result_markdown_empty_reasoning_no_details():
@@ -225,5 +227,15 @@ def test_build_result_markdown_empty_reasoning_no_details():
     job.result = {"response": "Just the plan."}
 
     md = manager._build_result_markdown(job)
-    assert "<details>" not in md
+    assert "Reasoning Trace" not in md
     assert "Just the plan." in md
+
+
+def test_build_reasoning_markdown_empty_reasoning_returns_empty_string():
+    manager = JobManager()
+    job = manager.create_job("plan")
+    job.status = JobStatus.COMPLETED
+    job.status_message = "Done"
+    job.reasoning_trace = ""
+
+    assert manager._build_reasoning_markdown(job) == ""

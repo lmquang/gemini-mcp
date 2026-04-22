@@ -39,6 +39,7 @@ class Job:
     session_id: Optional[str] = None
     model: Optional[str] = None
     output_path: Optional[str] = None
+    reasoning_trace_path: Optional[str] = None
     reasoning_trace: Optional[str] = None
     task: Optional[asyncio.Task] = None
     _cancel_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
@@ -63,8 +64,8 @@ class Job:
             payload["model"] = self.model
         if self.output_path:
             payload["outputPath"] = self.output_path
-        if self.reasoning_trace:
-            payload["reasoningTrace"] = self.reasoning_trace
+        if self.reasoning_trace_path:
+            payload["reasoningTracePath"] = self.reasoning_trace_path
         return payload
 
     def build_artifact_metadata(self) -> dict[str, Any]:
@@ -80,6 +81,7 @@ class Job:
             "sessionID": self.session_id,
             "model": self.model,
             "outputPath": self.output_path,
+            "reasoningTracePath": self.reasoning_trace_path,
         }
 
 
@@ -169,14 +171,21 @@ class JobManager:
         if files_touched:
             meta.append(f"- **Files touched**: {', '.join(files_touched)}")
         meta_section = "\n".join(meta) + "\n\n" if meta else ""
-        sections = [header, meta_section, "## Final Answer\n\n", response, "\n"]
-        if job.reasoning_trace:
-            sections.append(
-                "\n<details>\n<summary>Reasoning Trace</summary>\n\n"
-                + job.reasoning_trace
-                + "\n\n</details>\n"
-            )
-        return "".join(sections)
+        return "".join([header, meta_section, "## Final Answer\n\n", response, "\n"])
+
+    def _build_reasoning_markdown(self, job: Job) -> str:
+        reasoning_trace = (job.reasoning_trace or "").strip()
+        if not reasoning_trace:
+            return ""
+        header = f"# {job.tool_name} Reasoning Trace: {job.job_id}\n\n"
+        meta = []
+        if job.model:
+            meta.append(f"- **Model**: {job.model}")
+        if job.session_id:
+            meta.append(f"- **Session**: {job.session_id}")
+        meta.append(f"- **Duration**: {int(job.last_updated_at - job.created_at)}s")
+        meta_section = "\n".join(meta) + "\n\n" if meta else ""
+        return "".join([header, meta_section, reasoning_trace, "\n"])
 
     def get_job(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)
@@ -225,12 +234,16 @@ class JobManager:
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
         result_markdown_path = artifact_dir / "result.md"
+        reasoning_markdown_path = artifact_dir / "reasoning.md"
         result_json_path = artifact_dir / "result.json"
         meta_json_path = artifact_dir / "meta.json"
 
         result_markdown_path.write_text(self._build_result_markdown(job), encoding="utf-8")
         result_json_path.write_text(json.dumps(job.result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         job.output_path = str(result_markdown_path)
+        if job.reasoning_trace:
+            reasoning_markdown_path.write_text(self._build_reasoning_markdown(job), encoding="utf-8")
+            job.reasoning_trace_path = str(reasoning_markdown_path)
         meta_json_path.write_text(
             json.dumps(job.build_artifact_metadata(), indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
