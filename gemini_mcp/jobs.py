@@ -39,6 +39,7 @@ class Job:
     session_id: Optional[str] = None
     model: Optional[str] = None
     output_path: Optional[str] = None
+    reasoning_trace: Optional[str] = None
     task: Optional[asyncio.Task] = None
     _cancel_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
@@ -62,6 +63,8 @@ class Job:
             payload["model"] = self.model
         if self.output_path:
             payload["outputPath"] = self.output_path
+        if self.reasoning_trace:
+            payload["reasoningTrace"] = self.reasoning_trace
         return payload
 
     def build_artifact_metadata(self) -> dict[str, Any]:
@@ -166,7 +169,14 @@ class JobManager:
         if files_touched:
             meta.append(f"- **Files touched**: {', '.join(files_touched)}")
         meta_section = "\n".join(meta) + "\n\n" if meta else ""
-        return header + meta_section + response + "\n"
+        sections = [header, meta_section, "## Final Answer\n\n", response, "\n"]
+        if job.reasoning_trace:
+            sections.append(
+                "\n<details>\n<summary>Reasoning Trace</summary>\n\n"
+                + job.reasoning_trace
+                + "\n\n</details>\n"
+            )
+        return "".join(sections)
 
     def get_job(self, job_id: str) -> Optional[Job]:
         return self._jobs.get(job_id)

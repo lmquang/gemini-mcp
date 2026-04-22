@@ -104,6 +104,7 @@ async def _run_job_background(
             result=data,
             session_id=data.get("sessionID"),
             model=data.get("model"),
+            reasoning_trace=data.get("reasoning_trace", ""),
         )
         job_manager.persist_result(job_id, cwd=cwd)
         logger.info("Job completed", extra={"job_id": job_id, "tool": tool_name})
@@ -126,7 +127,7 @@ async def _run_job_background(
 
 @mcp.tool()
 async def job_status(jobID: str) -> str:
-    """Check the status of a background Gemini job. Poll this until status is completed/failed/cancelled."""
+    """Check the status of a background Gemini job. Poll this until status is completed/failed/cancelled. When the job completes, the outputPath field points to a persisted Markdown file with a clean answer and collapsible reasoning trace."""
     job = job_manager.get_job(jobID)
     if not job:
         return json.dumps({"ok": False, "error": f"Job {jobID} not found"}, indent=2)
@@ -135,7 +136,7 @@ async def job_status(jobID: str) -> str:
 
 @mcp.tool()
 async def job_result(jobID: str) -> str:
-    """Get the result of a completed background Gemini job. Only call after job_status shows completed."""
+    """Get the result of a completed background Gemini job. Only call after job_status shows completed. Results are cleaned: intermediate thinking steps are separated from the final answer. The `response` field contains the substantive answer; `reasoning_trace` contains intermediate reasoning (collapsed in the persisted markdown). The `outputPath` from job_status points to a formatted Markdown file suitable for agent handoff."""
     job = job_manager.get_job(jobID)
     if not job:
         return json.dumps({"ok": False, "error": f"Job {jobID} not found"}, indent=2)
@@ -223,7 +224,7 @@ async def explore(
     sessionMode: str = "auto",
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Explore codebase with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result.
+    """Explore codebase with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result. Responses are cleaned: thinking steps are separated from the final answer in job_result.
 
     Runs in plan mode without full-process sandboxing. Default to `sessionMode='auto'` to continue the current managed Gemini session.
     Use `sessionMode='new'` only when you want a clean exploration thread or need to avoid prior conversation context.
@@ -258,7 +259,7 @@ async def analyze(
     sessionMode: str = "auto",
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Technical code review with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result.
+    """Technical code review with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result. Responses are cleaned: thinking steps are separated from the final answer in job_result.
 
     Runs in plan mode without full-process sandboxing. Default to `sessionMode='auto'` to reuse the current managed review session.
     Use `sessionMode='new'` when the review should ignore prior context or start a fresh investigation.
@@ -293,7 +294,7 @@ async def plan(
     sessionMode: str = "auto",
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Generate architecture plans with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result.
+    """Generate architecture plans with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result. Responses are cleaned: thinking steps are separated from the final answer in job_result.
 
     Runs in plan mode without full-process sandboxing. Default to `sessionMode='auto'` to continue the current planning session.
     Use `sessionMode='new'` when you want an isolated plan not influenced by earlier prompts.
@@ -333,7 +334,7 @@ async def document(
     target_directory: Optional[str] = None,
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Write documentation with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result.
+    """Write documentation with Gemini. Starts a background job — returns a jobID immediately. Poll job_status, then get results with job_result. Responses are cleaned: thinking steps are separated from the final answer in job_result.
 
     Default to `sessionMode='auto'` to reuse the current managed documentation session.
     Use `sessionMode='new'` when you want a fresh documentation thread. Pass `sessionID` to force a specific Gemini session.

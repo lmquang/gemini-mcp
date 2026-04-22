@@ -1,7 +1,18 @@
 """Output parsers for Gemini CLI responses."""
 
 import json
+import logging
 import re
+
+logger = logging.getLogger("gemini-mcp")
+
+THOUGHT_MARKER_RE = re.compile(r"\[Thought:\s*(?:true|false)\]\s*", re.IGNORECASE)
+WORD_BREAK_RE = re.compile(r"(\w)-\n(\w)")
+THINKING_VERBS = (
+    "Analyzing", "Investigating", "Correcting", "Planning", "Examining",
+    "Processing", "Refining", "Looking", "Searching", "Checking",
+    "Evaluating", "Comparing", "Reviewing", "Considering",
+)
 
 
 def extract_session_id(payload) -> str | None:
@@ -59,6 +70,110 @@ def parse_stream_json(stdout: str) -> list[dict]:
             else:
                 break
     return events
+
+
+def clean_stream_response(response_parts: list[str]) -> tuple[str, str]:
+    """Separate thinking steps from the final answer and clean formatting.
+
+    Strips [Thought: true/false] markers, rejoins word-broken lines, and
+    classifies each part as either an intermediate reasoning step or the
+    substantive final answer.
+
+    Returns (final_answer, reasoning_trace).
+    """
+    if not response_parts:
+        return "", ""
+
+    thinking_parts: list[str] = []
+    answer_parts: list[str] = []
+
+    for part in response_parts:
+        has_thought_marker = bool(THOUGHT_MARKER_RE.search(part))
+        cleaned = THOUGHT_MARKER_RE.sub("", part)
+        cleaned = WORD_BREAK_RE.sub(r"\1\2", cleaned)
+        cleaned = cleaned.strip()
+        if not cleaned:
+            continue
+
+        is_short_interjection = len(cleaned) < 120 and cleaned.startswith(THINKING_VERBS)
+
+        if has_thought_marker or is_short_interjection:
+            thinking_parts.append(cleaned)
+        else:
+            answer_parts.append(cleaned)
+
+    if not answer_parts and thinking_parts:
+        answer_parts = [thinking_parts.pop()]
+
+    final_answer = "\n\n".join(answer_parts).strip()
+    reasoning_trace = "\n\n".join(thinking_parts).strip()
+    return final_answer, reasoning_trace
+
+
+def normalize_stream_text(text: str) -> str:
+    """Normalize reconstructed assistant text for handoff output."""
+    cleaned = THOUGHT_MARKER_RE.sub("", text)
+    cleaned = WORD_BREAK_RE.sub(r"\1\2", cleaned)
+    return cleaned.strip()
+
+
+def collect_assistant_response_parts(events: list[dict]) -> list[str]:
+    """Reconstruct assistant responses from stream-json events.
+
+    Gemini `stream-json` emits assistant text as incremental delta chunks. Those
+    chunks must be concatenated before any reasoning-vs-answer cleanup happens.
+    """
+    response_parts: list[str] = []
+    delta_buffer: list[str] = []
+
+    def flush_delta_buffer() -> None:
+        if not delta_buffer:
+            return
+        combined = "".join(delta_buffer).strip()
+        delta_buffer.clear()
+        if combined:
+            response_parts.append(combined)
+
+    for event in events:
+        if event.get("type") != "message" or event.get("role") != "assistant":
+            flush_delta_buffer()
+            continue
+
+        content = event.get("content")
+        text_parts: list[str] = []
+        if isinstance(content, str) and content.strip():
+            text_parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = part.get("text", "")
+                    if isinstance(text, str) and text:
+                        text_parts.append(text)
+
+        if not text_parts:
+            continue
+
+        text = "".join(text_parts)
+        if event.get("delta") is True:
+            delta_buffer.append(text)
+            continue
+
+        flushed_delta = "".join(delta_buffer).strip() if delta_buffer else ""
+        flush_delta_buffer()
+        normalized_text = text.strip()
+        if normalized_text and normalized_text != flushed_delta:
+            response_parts.append(normalized_text)
+
+    flush_delta_buffer()
+    logger.debug(
+        "Collected assistant response parts",
+        extra={
+            "event_count": len(events),
+            "response_part_count": len(response_parts),
+            "delta_detected": any(event.get("delta") is True for event in events),
+        },
+    )
+    return response_parts
 
 
 def extract_touched_paths(events: list[dict]) -> list[str]:
@@ -153,16 +268,7 @@ def parse_and_summarize(output: dict, format: str) -> dict:
 
     events = parse_stream_json(stdout)
 
-    response_parts = []
-    for e in events:
-        if e.get("type") == "message" and e.get("role") == "assistant":
-            content = e.get("content")
-            if isinstance(content, str) and content.strip():
-                response_parts.append(content)
-            elif isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        response_parts.append(part.get("text", ""))
+    response_parts = collect_assistant_response_parts(events)
 
     tools = sorted({
         e.get("tool_name") or e.get("name") or "unknown"
@@ -170,17 +276,24 @@ def parse_and_summarize(output: dict, format: str) -> dict:
     })
     files_touched = extract_touched_paths(events)
 
-    response = "\n".join(response_parts).strip()
+    if len(response_parts) > 1:
+        normalized_parts = [normalize_stream_text(part) for part in response_parts]
+        normalized_parts = [part for part in normalized_parts if part]
+        final_answer = normalized_parts[-1] if normalized_parts else ""
+        reasoning_trace = "\n\n".join(normalized_parts[:-1]).strip()
+    else:
+        final_answer, reasoning_trace = clean_stream_response(response_parts)
 
-    if not response and not tools:
+    if not final_answer and not tools:
         if stdout.strip():
-            response = f"No structured response found. Raw output:\n{stdout[:1000]}"
+            final_answer = f"No structured response found. Raw output:\n{stdout[:1000]}"
         else:
-            response = "No response received from Gemini CLI."
+            final_answer = "No response received from Gemini CLI."
 
     result = {
         "ok": True,
-        "response": response,
+        "response": final_answer,
+        "reasoning_trace": reasoning_trace,
         "tools_used": tools,
         "files_touched": files_touched,
         "event_count": len(events),
