@@ -49,27 +49,24 @@ Add the following configuration to your MCP client (e.g., Claude Desktop or othe
 
 The server exposes the following tools, organized by category.
 
-#### Job Management Tools
+#### Run Artifact Tools
 
-Agentic tools (`explore`, `analyze`, `plan`, `document`) run as background jobs to avoid client timeouts. Use these tools to track and retrieve results.
+Agentic tools (`explore`, `analyze`, `plan`, `document`) run as native FastMCP tasks. Persisted run artifacts are available for history and handoff.
 
-- **`job_status`**: Check the status of a background job. Poll until `status` is `completed`, `failed`, or `cancelled`.
-- **`job_result`**: Get the result of a completed job. Only call after `job_status` shows a terminal status.
-- **`list_jobs`**: List all background jobs and their statuses.
-- **`cancel_job`**: Cancel a running background job.
+- **`list_runs`**: List persisted Gemini run artifacts for the current working directory.
 
 #### Gemini Model / Session Tools
 
 - **`list_models`**: Lists available Gemini models with their tier and usage.
 - **`list_sessions`**: Lists Gemini CLI sessions for the current project.
 
-#### Chat (Fast — No Background Job)
+#### Chat (Fast — No Native Task Needed)
 
 - **`chat`**: Lightweight chat with Gemini — no repo indexing, no sandbox. Auto-resumes the managed session unless `sessionMode='new'` or `sessionID` is provided.
 
-#### Agentic Tools (Background Jobs)
+#### Agentic Tools (Native FastMCP Tasks)
 
-These tools start a background Gemini job and return a `jobID` immediately. Poll `job_status` and retrieve results with `job_result`.
+These tools execute as native FastMCP tasks. Task-aware clients can observe progress and await the final result directly. The final payload includes `runID`, `outputPath`, and `reasoningTracePath` for persisted artifacts.
 
 - **`explore`**: Investigates the codebase, researching and mapping project structure.
 - **`analyze`**: Performs technical code reviews for bugs, performance, security, and architectural issues.
@@ -78,17 +75,17 @@ These tools start a background Gemini job and return a `jobID` immediately. Poll
 
 ### Workflow Pattern
 
-1. Call an agentic tool (e.g., `explore`) — it returns a `jobID` immediately.
-2. Poll `job_status(jobID)` until `status` is `completed`, `failed`, or `cancelled`.
-3. Call `job_result(jobID)` to get the full result.
+1. Call an agentic tool (e.g., `explore`) as a native FastMCP task.
+2. Observe progress updates if your client supports them.
+3. Await the task result to get the full structured payload.
+4. Read `outputPath` when you need the persisted Markdown artifact.
 
 Example:
 
 ```
-1. explore(prompt="Summarize the project structure") → {"ok": true, "jobID": "abc123", "status": "running"}
-2. job_status(jobID="abc123")                        → {"status": "running", "elapsedSeconds": 15}
-3. job_status(jobID="abc123")                        → {"status": "completed", "elapsedSeconds": 32}
-4. job_result(jobID="abc123")                        → {"ok": true, "response": "...", "sessionID": "..."}
+1. explore(prompt="Summarize the project structure") → native FastMCP task
+2. task progress                                  → "Gemini initialized", "Gemini started responding", ...
+3. task result                                    → {"ok": true, "response": "...", "runID": "...", "outputPath": "..."}
 ```
 
 ### Session Management
@@ -98,19 +95,19 @@ Most tools support seamless managed session reuse across calls, auto-resuming th
 - Use `sessionMode="auto"` or omit `sessionMode` to reuse the current managed Gemini session for the same MCP connection and working directory.
 - Use `sessionMode="new"` only when you need a fresh conversation boundary, such as switching tasks, avoiding stale context, or debugging session behavior.
 - Pass `sessionID` to force a specific Gemini session explicitly.
-- Agentic job start responses may include a preview `sessionID` when an existing managed session is already known; the final active session is always returned by `job_status` and `job_result`.
+- Agentic tool final payloads include the final active `sessionID` when Gemini reports one.
 
 ### Runtime Behavior
 
-- Agentic tools start background jobs that return immediately with a `jobID`.
-- `chat` runs synchronously (no background job needed — it's fast).
+- Agentic tools run as native FastMCP tasks and return final structured payloads when awaited.
+- `chat` runs synchronously (no native task needed — it's fast).
 - Read-only agentic tools (`explore`, `analyze`, `plan`, and `document` with `apply=false`) run in `approval-mode plan` without full-process `--sandbox` so Gemini `stream-json` events can surface promptly.
 - `document` with `apply=true` keeps the write/apply edit path and returns `mode: "applied"` on success.
 - Use `sessionMode="new"` on any session-aware tool when you want to force a fresh managed session.
 
 ### MCP Tasks Protocol Support
 
-Agentic tools are registered with `task=True`, enabling native MCP Tasks protocol support for task-aware clients. When a task-aware client calls these tools, FastMCP returns a `taskId` immediately via the MCP Tasks protocol. For non-task-aware clients, the tool still returns quickly with a `jobID` and the JobManager handles background execution.
+Agentic tools are registered with `task=True`, enabling native MCP Tasks protocol support for task-aware clients. FastMCP task lifecycle and progress are the source of truth for live execution. Persisted run artifacts are history/handoff records only.
 
 ## Configuration
 

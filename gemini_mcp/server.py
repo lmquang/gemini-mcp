@@ -1,27 +1,13 @@
 """Gemini MCP server entry point."""
 
 import argparse
-import asyncio
-import signal
 import atexit
 import logging
-import sys
 import os
+import signal
+import sys
 
 LOG_FILE = os.environ.get("GEMINI_LOG_FILE", "/tmp/gemini-mcp.log")
-try:
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        filename=LOG_FILE,
-        filemode='a'
-    )
-except Exception:
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        stream=sys.stderr
-    )
 logger = logging.getLogger("gemini-mcp")
 
 from gemini_mcp.runner import active_processes
@@ -39,20 +25,40 @@ def cleanup():
     active_processes.clear()
 
 
+def configure_logging():
+    try:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            filename=LOG_FILE,
+            filemode='a'
+        )
+    except Exception:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            stream=sys.stderr
+        )
+
+
 def signal_handler(sig, frame):
     logger.info("Received signal %s, exiting...", sig)
     cleanup()
     sys.exit(0)
 
 
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-atexit.register(cleanup)
+def install_signal_handlers():
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    atexit.register(cleanup)
 
 from gemini_mcp.tools import mcp  # noqa: F401, E402
 
 
-def main():
+def main(argv: list[str] | None = None):
+    configure_logging()
+    install_signal_handlers()
+
     parser = argparse.ArgumentParser(description="Gemini MCP Server")
     parser.add_argument(
         "--transport",
@@ -71,11 +77,12 @@ def main():
         default=8000,
         help="Port for streamable-http transport (default: 8000)"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.transport == "stdio":
         mcp.run()
     else:
+        logger.info("Starting streamable HTTP transport", extra={"host": args.host, "port": args.port})
         mcp.run(transport="streamable-http", host=args.host, port=args.port)
 
 

@@ -1,6 +1,6 @@
 import json
 
-from gemini_mcp.jobs import Job, JobStatus, JobManager
+from gemini_mcp.jobs import ArtifactStore, RunStatus
 from gemini_mcp.parsers import (
     THOUGHT_MARKER_RE,
     WORD_BREAK_RE,
@@ -186,56 +186,56 @@ def test_parse_and_summarize_json_format_no_reasoning_trace():
 
 
 def test_build_result_markdown_includes_collapsible_reasoning(tmp_path):
-    manager = JobManager()
-    job = manager.create_job("analyze")
-    job.status = JobStatus.COMPLETED
-    job.status_message = "Done"
-    job.model = "gemini-3-flash-preview"
-    job.reasoning_trace = "Step 1: Looked at code\nStep 2: Found the issue"
-    job.result = {"response": "The issue is in module X.", "tools_used": ["grep"]}
+    store = ArtifactStore()
+    run = store.create_run("analyze")
+    run.status = RunStatus.COMPLETED
+    run.status_message = "Done"
+    run.model = "gemini-3-flash-preview"
+    run.reasoning_trace = "Step 1: Looked at code\nStep 2: Found the issue"
+    run.result = {"response": "The issue is in module X.", "tools_used": ["grep"]}
 
-    md = manager._build_result_markdown(job)
+    md = store._build_result_markdown(run)
     assert "## Final Answer" in md
     assert "The issue is in module X." in md
     assert "Reasoning Trace" not in md
 
-    reasoning_md = manager._build_reasoning_markdown(job)
+    reasoning_md = store._build_reasoning_markdown(run)
     assert "# analyze Reasoning Trace:" in reasoning_md
     assert "Step 1: Looked at code" in reasoning_md
     assert "Step 2: Found the issue" in reasoning_md
 
 
 def test_build_result_markdown_no_reasoning_no_details(tmp_path):
-    manager = JobManager()
-    job = manager.create_job("explore")
-    job.status = JobStatus.COMPLETED
-    job.status_message = "Done"
-    job.result = {"response": "Clean answer only."}
+    store = ArtifactStore()
+    run = store.create_run("explore")
+    run.status = RunStatus.COMPLETED
+    run.status_message = "Done"
+    run.result = {"response": "Clean answer only."}
 
-    md = manager._build_result_markdown(job)
+    md = store._build_result_markdown(run)
     assert "## Final Answer" in md
     assert "Clean answer only." in md
     assert "Reasoning Trace" not in md
 
 
 def test_build_result_markdown_empty_reasoning_no_details():
-    manager = JobManager()
-    job = manager.create_job("plan")
-    job.status = JobStatus.COMPLETED
-    job.status_message = "Done"
-    job.reasoning_trace = ""
-    job.result = {"response": "Just the plan."}
+    store = ArtifactStore()
+    run = store.create_run("plan")
+    run.status = RunStatus.COMPLETED
+    run.status_message = "Done"
+    run.reasoning_trace = ""
+    run.result = {"response": "Just the plan."}
 
-    md = manager._build_result_markdown(job)
+    md = store._build_result_markdown(run)
     assert "Reasoning Trace" not in md
     assert "Just the plan." in md
 
 
 def test_build_reasoning_markdown_empty_reasoning_returns_empty_string():
-    manager = JobManager()
-    job = manager.create_job("plan")
-    job.status = JobStatus.COMPLETED
-    job.status_message = "Done"
-    job.reasoning_trace = ""
+    store = ArtifactStore()
+    run = store.create_run("plan")
+    run.status = RunStatus.COMPLETED
+    run.status_message = "Done"
+    run.reasoning_trace = ""
 
-    assert manager._build_reasoning_markdown(job) == ""
+    assert store._build_reasoning_markdown(run) == ""

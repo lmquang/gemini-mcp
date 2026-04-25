@@ -39,10 +39,10 @@ from gemini_mcp.runner import (
     list_gemini_sessions,
 )
 from gemini_mcp.jobs import (
-    JobManager,
-    JobStatus,
-    Job,
-    job_manager,
+    ArtifactStore,
+    RunStatus,
+    RunRecord,
+    artifact_store,
 )
 from gemini_mcp.tools import mcp
 
@@ -77,9 +77,9 @@ __all__ = [
     "parse_session_listing",
     "resolve_session_reference_value",
     "list_gemini_sessions",
-    "JobManager",
-    "JobStatus",
-    "Job",
-    "job_manager",
+    "ArtifactStore",
+    "RunStatus",
+    "RunRecord",
+    "artifact_store",
     "mcp",
 ]

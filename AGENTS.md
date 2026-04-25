@@ -9,7 +9,7 @@
 
 ## Verification
 - There is no repo-local lint, formatter, or typecheck config. Do not invent extra verification steps.
-- Current focused test command: `pytest tests/test_jobs.py tests/test_session_management.py`.
+- Current focused test command: `pytest tests/test_parsers.py tests/test_jobs.py tests/test_session_management.py tests/test_tools_native_tasks.py tests/test_server.py`.
 - Tests import the package via `tests/conftest.py`, so running the focused pytest command from repo root works without installation.
 - Pytest currently emits a `pytest-asyncio` deprecation warning about `asyncio_default_fixture_loop_scope`; this is expected in the current config.
 
@@ -18,16 +18,16 @@
 - Root `server.py` is only a standalone wrapper with inline script dependencies that forwards to `gemini_mcp.server:main`.
 - `gemini_mcp/tools/__init__.py` is the tool surface and registration point for MCP tools.
 - `gemini_mcp/runner.py` owns Gemini CLI execution, isolated home setup, retries, session reuse, and subprocess lifecycle.
-- `gemini_mcp/jobs.py` owns in-memory job tracking plus persisted job artifacts.
+- `gemini_mcp/jobs.py` owns persisted run artifacts/history only. Native FastMCP tasks are the live execution source of truth.
 
 ## Session Rules
 - Session reuse is designed to be the default. Use `sessionMode="auto"` or omit it for normal follow-up calls on the same MCP connection and `cwd`.
 - Use `sessionMode="new"` only when you explicitly want a fresh Gemini conversation boundary.
-- Agentic tools may return `sessionID: null` immediately if no managed session is known yet; the final session is always visible in `job_status` and `job_result`.
+- Agentic tool final payloads include the final `sessionID` when Gemini reports one.
 
 ## Persistent Artifacts
-- Background job outputs are written under `.gemini-mcp/jobs/YYYYMMDD/<session-id|no-session>/HHMMSS-<job_id>/`.
-- Each persisted job bundle contains `meta.json`, `result.json`, and `result.md`.
+- Native task run outputs are written under `.gemini-mcp/jobs/YYYYMMDD/<session-id|no-session>/HHMMSS-<run_id>/`.
+- Each persisted run bundle contains `meta.json`, `result.json`, and `result.md` when a final response exists. Runs with no final response still persist `meta.json` and `result.json`.
 - `outputPath` points to the bundle's `result.md`, not to the job directory.
 - Legacy flat `.gemini-mcp/jobs/*.md` files may still exist from older runs; do not assume the directory contains only the new layout.
 

@@ -195,6 +195,10 @@ def _truncate_session_title(title: str, limit: int = 80) -> str:
     return cleaned[: limit - 3].rstrip() + "..."
 
 
+def _session_sort_key(entry: dict) -> str:
+    return entry.get("lastUpdated") or entry.get("startTime") or f"{entry.get('index', 0):08d}"
+
+
 def _project_chat_dirs(source_home: Path, cwd: Optional[str]) -> list[Path]:
     target_cwd = os.path.abspath(cwd or os.getcwd())
     tmp_root = source_home / "tmp"
@@ -272,7 +276,7 @@ def merge_session_sources(cli_sessions: list[dict], persisted_sessions: list[dic
         merged[session["id"]] = {**existing, **session}
     ordered = sorted(
         merged.values(),
-        key=lambda entry: entry.get("lastUpdated") or entry.get("startTime") or f"{entry.get('index', 0):08d}",
+        key=_session_sort_key,
         reverse=True,
     )
     for idx, session in enumerate(ordered, start=1):
@@ -298,8 +302,7 @@ def get_most_recent_session_id(sessions: list[dict]) -> Optional[str]:
     """Return the newest Gemini session ID from a parsed session listing."""
     if not sessions:
         return None
-    newest_session = max(sessions, key=lambda entry: entry["index"])
-    return newest_session["id"]
+    return sessions[0]["id"]
 
 
 async def list_gemini_sessions(cwd: Optional[str], approval_mode: Optional[str] = None) -> list[dict]:
@@ -475,6 +478,7 @@ async def run_gemini_cli(
     session: Optional[str] = None,
     session_mode: str = "auto",
     sandbox: Optional[bool] = None,
+    progress_callback=None,
 ) -> dict:
     """Execute Gemini CLI with retries, isolated env, and heartbeat."""
     max_retries = 3
@@ -562,6 +566,7 @@ async def run_gemini_cli(
             heartbeat_state = {"sequence": 0}
             stream_state = {"saw_init": False, "saw_assistant": False, "completed": False}
 
+            await _notify_progress(progress_callback, f"Starting Gemini CLI with {model}")
             await _notify_context(context, f"Starting Gemini CLI with {model}...")
             await _notify_context(context, "Gemini process started, waiting for first output...")
 
@@ -597,31 +602,37 @@ async def run_gemini_cli(
                                 stream_state["saw_init"] = True
                                 heartbeat_state["sequence"] += 1
                                 await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "initialized")
+                                await _notify_progress(progress_callback, "Gemini initialized")
                                 await _notify_context(context, "Gemini initialized and is processing the request...")
                             elif event_type == "tool_use":
                                 heartbeat_state["sequence"] += 1
                                 await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "using tools")
+                                await _notify_progress(progress_callback, f"Gemini is using {event.get('tool_name', 'a tool')}")
                                 await _notify_context(context, f"Gemini is using {event.get('tool_name', 'a tool')}...")
                             elif event_type == "message" and event.get("role") == "assistant" and not stream_state["saw_assistant"]:
                                 stream_state["saw_assistant"] = True
                                 heartbeat_state["sequence"] += 1
                                 await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "responding")
+                                await _notify_progress(progress_callback, "Gemini started responding")
                                 await _notify_context(context, "Gemini started responding.")
                             elif event_type == "result" and not stream_state["completed"]:
                                 stream_state["completed"] = True
                                 heartbeat_state["sequence"] += 1
                                 await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "completed")
+                                await _notify_progress(progress_callback, "Gemini run completed")
                                 await _notify_context(context, "Gemini run completed.")
 
                         if "429" in line:
                             heartbeat_state["sequence"] += 1
                             await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "retrying")
+                            await _notify_progress(progress_callback, "Rate limit hit, retrying")
                             await _notify_context(context, "Rate limit hit, retrying...")
 
                 except asyncio.TimeoutError:
                     elapsed = int(time.time() - start_time)
                     heartbeat_state["sequence"] += 1
                     await _report_keepalive(context, heartbeat_state["sequence"], elapsed, "running")
+                    await _notify_progress(progress_callback, f"Gemini still running ({elapsed}s elapsed)")
                     await _notify_context(context, f"Still working... ({elapsed}s elapsed)")
 
                     if timeout > 0 and time.time() - start_time > timeout:
@@ -697,6 +708,9 @@ async def run_gemini_cli(
             raise
         except GeminiAuthError:
             raise
+        except asyncio.CancelledError:
+            await _notify_progress(progress_callback, "Gemini run cancelled")
+            raise
         except Exception as e:
             logger.exception("Execution error on attempt %d", attempt + 1)
             last_res = {"ok": False, "error": str(e), "stderr": str(e), "stdout": ""}
@@ -734,6 +748,15 @@ async def _notify_context(context: Optional["Context"], message: str):
         logger.debug("Failed to send MCP context update", extra={"message": message}, exc_info=True)
 
 
+async def _notify_progress(progress_callback, message: str):
+    if not progress_callback:
+        return
+    try:
+        await progress_callback(message)
+    except Exception:
+        logger.debug("Failed to send progress callback", extra={"message": message}, exc_info=True)
+
+
 async def _report_keepalive(context: Optional["Context"], sequence: int, elapsed_seconds: int, stage: str):
     """Send progress notification to MCP session."""
     if not context:
@@ -763,14 +786,16 @@ async def run_with_fallback(
     mode: str,
     models: list[str],
     context: Optional["Context"] = None,
+    progress_callback=None,
     **kwargs,
 ) -> dict:
     """Run Gemini CLI with model fallback chain."""
     last_res = {"ok": False, "error": "No models available"}
     for model in models:
         await _notify_context(context, f"Attempting with {model}...")
+        await _notify_progress(progress_callback, f"Attempting with {model}")
         try:
-            res = await run_gemini_cli(prompt, mode=mode, model=model, context=context, **kwargs)
+            res = await run_gemini_cli(prompt, mode=mode, model=model, context=context, progress_callback=progress_callback, **kwargs)
         except GeminiAuthError as e:
             result = {"ok": False, "error": f"Authentication failed: {e}", "stdout": e.stdout, "stderr": "", "model": model}
             if e.session_id:
@@ -796,6 +821,7 @@ async def run_with_fallback(
 
         if is_transient:
             await _notify_context(context, f"Model {model} failed or busy. Falling back...")
+            await _notify_progress(progress_callback, f"Model {model} failed or busy; falling back")
             last_res = res
             last_res["model"] = model
             continue
@@ -822,6 +848,7 @@ async def run_agentic_tool(
     apply: bool = False,
     sandbox_override: Optional[bool] = None,
     system_prompt: Optional[str] = None,
+    progress_callback=None,
 ) -> str:
     """Helper for standard agentic tools (inspect/edit)."""
     instruction = system_prompt if system_prompt else default_instruction
@@ -854,7 +881,7 @@ async def run_agentic_tool(
         f"{instruction}\n\nTask: {prompt}", mode, selected_models, context,
         cwd=cwd, include_directories=include_directories, include_files=include_files,
         timeout=timeout, read_timeout=read_timeout, session=session, session_mode=session_mode,
-        sandbox=sandbox, approval_mode=approval,
+        sandbox=sandbox, approval_mode=approval, progress_callback=progress_callback,
     )
     data = parse_and_summarize(res, "stream-json")
     if mode == "edit" and apply and data.get("ok"):
