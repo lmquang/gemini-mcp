@@ -53,20 +53,23 @@ def _build_document_instruction(
     return base_instruction
 
 
-async def _report_tool_progress(context: Context, message: str) -> None:
+async def _report_tool_progress(context: Context, sequence: int, message: str) -> None:
     try:
-        await context.report_progress(progress=0.0, total=None, message=message)
+        await context.report_progress(progress=float(sequence), total=None, message=message)
     except Exception:
-        logger.debug("Failed to report tool progress", extra={"message": message}, exc_info=True)
+        logger.debug("Failed to report tool progress", extra={"sequence": sequence, "message": message}, exc_info=True)
 
 
 async def _execute_agentic_run(tool_name: str, context: Context, cwd: Optional[str], coro_factory) -> str:
     """Run an agentic tool as a native FastMCP task and persist its artifact bundle."""
     run = artifact_store.create_run(tool_name)
-    async def progress_callback(message: str) -> None:
-        await _report_tool_progress(context, message)
+    progress_state = {"sequence": 0}
 
-    await _report_tool_progress(context, f"Preparing {tool_name} run")
+    async def progress_callback(message: str) -> None:
+        progress_state["sequence"] += 1
+        await _report_tool_progress(context, progress_state["sequence"], message)
+
+    await progress_callback(f"Preparing {tool_name} run")
     try:
         result_str = await coro_factory(progress_callback)
         data = json.loads(result_str)
@@ -77,7 +80,7 @@ async def _execute_agentic_run(tool_name: str, context: Context, cwd: Optional[s
         run.model = data.get("model")
         run.reasoning_trace = data.get("reasoning_trace", "")
         run.last_updated_at = time.time()
-        await _report_tool_progress(context, f"Persisting {tool_name} artifact")
+        await progress_callback(f"Persisting {tool_name} artifact")
         artifact = artifact_store.persist_run(run, cwd=cwd)
         data.update(artifact)
         data["status"] = run.status.value
@@ -95,7 +98,7 @@ async def _execute_agentic_run(tool_name: str, context: Context, cwd: Optional[s
         run.status_message = str(e)
         run.result = {"ok": False, "error": str(e), "status": RunStatus.FAILED.value}
         run.last_updated_at = time.time()
-        await _report_tool_progress(context, f"Persisting failed {tool_name} artifact")
+        await progress_callback(f"Persisting failed {tool_name} artifact")
         artifact = artifact_store.persist_run(run, cwd=cwd)
         payload = dict(run.result)
         payload.update(artifact)

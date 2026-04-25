@@ -577,10 +577,10 @@ async def run_gemini_cli(
                         break
                     heartbeat_state["sequence"] += 1
                     elapsed = int(time.time() - start_time)
-                    await _report_keepalive(context, heartbeat_state["sequence"], elapsed, "running")
+                    await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], elapsed, "running", f"Gemini still running ({elapsed}s elapsed)")
 
             heartbeat_task = asyncio.create_task(heartbeat_loop())
-            await _report_keepalive(context, heartbeat_state["sequence"], 0, "started")
+            await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], 0, "started", f"Starting Gemini CLI with {model}")
 
             while True:
                 try:
@@ -601,38 +601,32 @@ async def run_gemini_cli(
                             if event_type == "init" and not stream_state["saw_init"]:
                                 stream_state["saw_init"] = True
                                 heartbeat_state["sequence"] += 1
-                                await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "initialized")
-                                await _notify_progress(progress_callback, "Gemini initialized")
+                                await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], int(time.time() - start_time), "initialized", "Gemini initialized")
                                 await _notify_context(context, "Gemini initialized and is processing the request...")
                             elif event_type == "tool_use":
                                 heartbeat_state["sequence"] += 1
-                                await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "using tools")
-                                await _notify_progress(progress_callback, f"Gemini is using {event.get('tool_name', 'a tool')}")
+                                await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], int(time.time() - start_time), "using tools", f"Gemini is using {event.get('tool_name', 'a tool')}")
                                 await _notify_context(context, f"Gemini is using {event.get('tool_name', 'a tool')}...")
                             elif event_type == "message" and event.get("role") == "assistant" and not stream_state["saw_assistant"]:
                                 stream_state["saw_assistant"] = True
                                 heartbeat_state["sequence"] += 1
-                                await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "responding")
-                                await _notify_progress(progress_callback, "Gemini started responding")
+                                await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], int(time.time() - start_time), "responding", "Gemini started responding")
                                 await _notify_context(context, "Gemini started responding.")
                             elif event_type == "result" and not stream_state["completed"]:
                                 stream_state["completed"] = True
                                 heartbeat_state["sequence"] += 1
-                                await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "completed")
-                                await _notify_progress(progress_callback, "Gemini run completed")
+                                await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], int(time.time() - start_time), "completed", "Gemini run completed")
                                 await _notify_context(context, "Gemini run completed.")
 
                         if "429" in line:
                             heartbeat_state["sequence"] += 1
-                            await _report_keepalive(context, heartbeat_state["sequence"], int(time.time() - start_time), "retrying")
-                            await _notify_progress(progress_callback, "Rate limit hit, retrying")
+                            await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], int(time.time() - start_time), "retrying", "Rate limit hit, retrying")
                             await _notify_context(context, "Rate limit hit, retrying...")
 
                 except asyncio.TimeoutError:
                     elapsed = int(time.time() - start_time)
                     heartbeat_state["sequence"] += 1
-                    await _report_keepalive(context, heartbeat_state["sequence"], elapsed, "running")
-                    await _notify_progress(progress_callback, f"Gemini still running ({elapsed}s elapsed)")
+                    await _emit_progress_update(context, progress_callback, heartbeat_state["sequence"], elapsed, "running", f"Gemini still running ({elapsed}s elapsed)")
                     await _notify_context(context, f"Still working... ({elapsed}s elapsed)")
 
                     if timeout > 0 and time.time() - start_time > timeout:
@@ -755,6 +749,20 @@ async def _notify_progress(progress_callback, message: str):
         await progress_callback(message)
     except Exception:
         logger.debug("Failed to send progress callback", extra={"message": message}, exc_info=True)
+
+
+async def _emit_progress_update(
+    context: Optional["Context"],
+    progress_callback,
+    sequence: int,
+    elapsed_seconds: int,
+    stage: str,
+    message: str,
+):
+    if progress_callback:
+        await _notify_progress(progress_callback, message)
+        return
+    await _report_keepalive(context, sequence, elapsed_seconds, stage)
 
 
 async def _report_keepalive(context: Optional["Context"], sequence: int, elapsed_seconds: int, stage: str):

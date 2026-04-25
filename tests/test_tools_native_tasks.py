@@ -11,9 +11,11 @@ class RecordingContext:
     def __init__(self, session_id: str = "client-native"):
         self.session = SimpleNamespace(id=session_id)
         self.progress_messages = []
+        self.progress_values = []
         self.info_messages = []
 
     async def report_progress(self, progress: float, total=None, message: str | None = None):
+        self.progress_values.append(progress)
         self.progress_messages.append(message)
 
     async def info(self, message: str):
@@ -66,6 +68,7 @@ async def test_agentic_tool_reports_progress(monkeypatch, tmp_path):
     assert "Preparing explore run" in context.progress_messages
     assert "runner stage" in context.progress_messages
     assert "Persisting explore artifact" in context.progress_messages
+    assert context.progress_values == [1.0, 2.0, 3.0]
 
 
 @pytest.mark.asyncio
