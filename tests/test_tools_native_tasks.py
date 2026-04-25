@@ -71,6 +71,17 @@ async def test_agentic_tool_reports_progress(monkeypatch, tmp_path):
     assert context.progress_values == [1.0, 2.0, 3.0]
 
 
+def test_coerce_tool_result_wraps_list_payload():
+    data = [{"content": "first"}, {"content": "second"}]
+
+    result = tools._coerce_tool_result(data)
+
+    assert result["ok"] is True
+    assert result["raw"] == data
+    assert result["tools_used"] == []
+    assert result["files_touched"] == []
+
+
 @pytest.mark.asyncio
 async def test_agentic_tool_failure_returns_failed_payload_and_artifact(monkeypatch, tmp_path):
     async def fake_run_agentic_tool(*args, **kwargs):

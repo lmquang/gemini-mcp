@@ -33,6 +33,39 @@ def extract_session_id(payload) -> str | None:
     return None
 
 
+def summarize_json_payload(payload) -> str:
+    """Extract a readable response from JSON-mode Gemini payloads."""
+    if isinstance(payload, dict):
+        response = payload.get("response") or payload.get("content")
+        if isinstance(response, str):
+            return response
+        if response is not None:
+            return str(response)
+        return str(payload)
+    if isinstance(payload, list):
+        text_parts = [
+            item.get("response") or item.get("content")
+            for item in payload
+            if isinstance(item, dict) and isinstance(item.get("response") or item.get("content"), str)
+        ]
+        if text_parts:
+            return "\n\n".join(text_parts)
+        return str(payload)
+    return str(payload)
+
+
+def normalize_event_list(payload) -> list[dict]:
+    """Flatten parsed stream payloads into dict events only."""
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        result: list[dict] = []
+        for item in payload:
+            result.extend(normalize_event_list(item))
+        return result
+    return []
+
+
 def parse_stream_json(stdout: str) -> list[dict]:
     """Parse a string containing potentially multiple JSON objects or streams."""
     events = []
@@ -63,7 +96,7 @@ def parse_stream_json(stdout: str) -> list[dict]:
             if depth == 0:
                 candidate = line[start:end]
                 try:
-                    events.append(json.loads(candidate))
+                    events.extend(normalize_event_list(json.loads(candidate)))
                     pos = end
                 except json.JSONDecodeError:
                     pos = start + 1
@@ -238,7 +271,7 @@ def parse_and_summarize(output: dict, format: str) -> dict:
                 parsed = json.loads(stdout[json_start:])
                 result = {
                     "ok": True,
-                    "response": parsed.get("response", parsed.get("content", str(parsed))),
+                    "response": summarize_json_payload(parsed),
                     "tools_used": [],
                     "files_touched": [],
                     "raw": parsed,

@@ -13,7 +13,13 @@ from typing import Optional
 
 import asyncio
 
-from gemini_mcp.config import DEFAULT_READ_TIMEOUT, DEFAULT_TIMEOUT_SECONDS, HEARTBEAT_INTERVAL_SECONDS, MODEL_TIERS
+from gemini_mcp.config import (
+    DEFAULT_READ_TIMEOUT,
+    DEFAULT_TIMEOUT_SECONDS,
+    HEARTBEAT_INTERVAL_SECONDS,
+    MODEL_TIERS,
+    SUBPROCESS_STREAM_LIMIT_BYTES,
+)
 from gemini_mcp.exceptions import GeminiAuthError, GeminiError, GeminiRateLimitError, GeminiTimeoutError
 from gemini_mcp.parsers import extract_session_id, parse_and_summarize, parse_stream_json
 
@@ -558,6 +564,7 @@ async def run_gemini_cli(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
+                limit=SUBPROCESS_STREAM_LIMIT_BYTES,
             )
             active_processes.add(process)
 

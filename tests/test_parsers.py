@@ -6,6 +6,7 @@ from gemini_mcp.parsers import (
     WORD_BREAK_RE,
     clean_stream_response,
     collect_assistant_response_parts,
+    normalize_event_list,
     normalize_stream_text,
     parse_and_summarize,
 )
@@ -125,6 +126,34 @@ def test_collect_assistant_response_parts_dedupes_final_full_message_after_delta
     assert collect_assistant_response_parts(events) == ["Hello world"]
 
 
+def test_normalize_event_list_flattens_nested_lists_and_ignores_scalars():
+    payload = [
+        {"type": "tool_use", "tool_name": "read_file"},
+        [[{"type": "message", "role": "assistant", "content": "Done", "delta": True}]],
+        "ignore",
+    ]
+
+    assert normalize_event_list(payload) == [
+        {"type": "tool_use", "tool_name": "read_file"},
+        {"type": "message", "role": "assistant", "content": "Done", "delta": True},
+    ]
+
+
+def test_parse_and_summarize_stream_json_handles_array_wrapped_events():
+    stream_stdout = (
+        '[{"type":"tool_use","tool_name":"read_file"}]\n'
+        '[[{"type":"message","role":"assistant","content":"Done","delta":true}]]\n'
+        '{"type":"result","status":"success"}\n'
+    )
+
+    output = {"ok": True, "exit_code": 0, "stdout": stream_stdout, "stderr": ""}
+    result = parse_and_summarize(output, "stream-json")
+
+    assert result["ok"] is True
+    assert result["response"] == "Done"
+    assert result["tools_used"] == ["read_file"]
+
+
 def test_parse_and_summarize_handles_split_thought_marker_across_deltas():
     stream_stdout = (
         '{"type":"message","role":"assistant","content":"**Analyzing** Looking at code.[Th","delta":true}\n'
@@ -183,6 +212,15 @@ def test_parse_and_summarize_json_format_no_reasoning_trace():
     result = parse_and_summarize(output, "json")
     assert result["ok"] is True
     assert "reasoning_trace" not in result
+
+
+def test_parse_and_summarize_json_format_handles_top_level_list_payload():
+    stdout = '[{"content": "first block"}, {"response": "second block"}]'
+    output = {"ok": True, "exit_code": 0, "stdout": stdout, "stderr": ""}
+    result = parse_and_summarize(output, "json")
+    assert result["ok"] is True
+    assert result["response"] == "first block\n\nsecond block"
+    assert result["raw"] == [{"content": "first block"}, {"response": "second block"}]
 
 
 def test_build_result_markdown_includes_collapsible_reasoning(tmp_path):

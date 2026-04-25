@@ -19,6 +19,18 @@ logger = logging.getLogger("gemini-mcp")
 mcp = FastMCP("Gemini Expert Assistant")
 
 
+def _coerce_tool_result(data):
+    if isinstance(data, dict):
+        return data
+    return {
+        "ok": True,
+        "response": data if isinstance(data, str) else json.dumps(data, ensure_ascii=False),
+        "raw": data,
+        "tools_used": [],
+        "files_touched": [],
+    }
+
+
 def _merge_target_directory(include_directories: Optional[list[str]], target_directory: Optional[str]) -> Optional[list[str]]:
     if not target_directory:
         return include_directories
@@ -72,7 +84,7 @@ async def _execute_agentic_run(tool_name: str, context: Context, cwd: Optional[s
     await progress_callback(f"Preparing {tool_name} run")
     try:
         result_str = await coro_factory(progress_callback)
-        data = json.loads(result_str)
+        data = _coerce_tool_result(json.loads(result_str))
         run.status = RunStatus.COMPLETED if data.get("ok") else RunStatus.FAILED
         run.status_message = "Done" if data.get("ok") else data.get("error", "Failed")
         run.result = data
