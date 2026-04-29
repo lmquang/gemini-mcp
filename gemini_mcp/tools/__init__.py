@@ -5,7 +5,10 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Optional
+
+_MAX_RESPONSE_CHARS = 25000
 
 from fastmcp import FastMCP, Context
 
@@ -94,9 +97,26 @@ async def _execute_agentic_run(tool_name: str, context: Context, cwd: Optional[s
         run.last_updated_at = time.time()
         await progress_callback(f"Persisting {tool_name} artifact")
         artifact = artifact_store.persist_run(run, cwd=cwd)
-        data.update(artifact)
-        data["status"] = run.status.value
-        return json.dumps(data, indent=2)
+
+        output_path = artifact.get("outputPath")
+        if output_path:
+            try:
+                response_text = Path(output_path).read_text("utf-8")
+            except Exception:
+                response_text = data.get("response", "")
+        else:
+            response_text = data.get("response", "")
+
+        if len(response_text) > _MAX_RESPONSE_CHARS:
+            response_text = response_text[:_MAX_RESPONSE_CHARS] + f"\n\n[truncated at {_MAX_RESPONSE_CHARS} chars. Full output: {output_path}]"
+
+        payload = {"response": response_text}
+        if run.session_id:
+            payload["sessionID"] = run.session_id
+        if output_path:
+            payload["outputPath"] = output_path
+
+        return json.dumps(payload, indent=2)
     except asyncio.CancelledError:
         run.status = RunStatus.CANCELLED
         run.status_message = "Cancelled by request"
@@ -112,8 +132,12 @@ async def _execute_agentic_run(tool_name: str, context: Context, cwd: Optional[s
         run.last_updated_at = time.time()
         await progress_callback(f"Persisting failed {tool_name} artifact")
         artifact = artifact_store.persist_run(run, cwd=cwd)
-        payload = dict(run.result)
-        payload.update(artifact)
+        payload = {
+            "response": f"Error: {e}",
+            "error": True,
+        }
+        if artifact.get("outputPath"):
+            payload["outputPath"] = artifact["outputPath"]
         logger.exception("Native task failed", extra={"run_id": run.run_id, "tool": tool_name})
         return json.dumps(payload, indent=2)
 
@@ -165,8 +189,13 @@ async def chat(
     full_prompt += prompt
     models = [model] if model else MODEL_TIERS["cheap"]
     res = await run_with_fallback(full_prompt, "chat", models, context, cwd=cwd, timeout=timeout, session=sessionID, session_mode=sessionMode, sandbox=False)
-    data = parse_and_summarize(res, "json")
-    return json.dumps(data, indent=2)
+    parsed = parse_and_summarize(res, "json")
+    payload = {"response": parsed.get("response") or parsed.get("error", "")}
+    if parsed.get("sessionID"):
+        payload["sessionID"] = parsed["sessionID"]
+    if not parsed.get("ok"):
+        payload["error"] = True
+    return json.dumps(payload, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +215,7 @@ async def explore(
     sessionMode: str = "auto",
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Explore codebase with Gemini as a native FastMCP task. Await the task result for the final structured payload. The payload includes `runID`, `outputPath`, and `reasoningTracePath` for persisted artifacts.
+    """Explore codebase with Gemini as a native FastMCP task. Await the task result for the final structured payload: `response` (Markdown content), `sessionID`, and `outputPath` for persisted artifacts.
 
     Runs in plan mode without full-process sandboxing. Default to `sessionMode='auto'` to continue the current managed Gemini session.
     Use `sessionMode='new'` only when you want a clean exploration thread or need to avoid prior conversation context.
@@ -216,7 +245,7 @@ async def analyze(
     sessionMode: str = "auto",
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Technical code review with Gemini as a native FastMCP task. Await the task result for the final structured payload. The payload includes `runID`, `outputPath`, and `reasoningTracePath` for persisted artifacts.
+    """Technical code review with Gemini as a native FastMCP task. Await the task result for the final structured payload: `response` (Markdown content), `sessionID`, and `outputPath` for persisted artifacts.
 
     Runs in plan mode without full-process sandboxing. Default to `sessionMode='auto'` to reuse the current managed review session.
     Use `sessionMode='new'` when the review should ignore prior context or start a fresh investigation.
@@ -246,7 +275,7 @@ async def plan(
     sessionMode: str = "auto",
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Generate architecture plans with Gemini as a native FastMCP task. Await the task result for the final structured payload. The payload includes `runID`, `outputPath`, and `reasoningTracePath` for persisted artifacts.
+    """Generate architecture plans with Gemini as a native FastMCP task. Await the task result for the final structured payload: `response` (Markdown content), `sessionID`, and `outputPath` for persisted artifacts.
 
     Runs in plan mode without full-process sandboxing. Default to `sessionMode='auto'` to continue the current planning session.
     Use `sessionMode='new'` when you want an isolated plan not influenced by earlier prompts.
@@ -281,7 +310,7 @@ async def document(
     target_directory: Optional[str] = None,
     system_prompt: Optional[str] = None,
 ) -> str:
-    """Write documentation with Gemini as a native FastMCP task. Await the task result for the final structured payload. The payload includes `runID`, `outputPath`, and `reasoningTracePath` for persisted artifacts.
+    """Write documentation with Gemini as a native FastMCP task. Await the task result for the final structured payload: `response` (Markdown content), `sessionID`, and `outputPath` for persisted artifacts.
 
     Default to `sessionMode='auto'` to reuse the current managed documentation session.
     Use `sessionMode='new'` when you want a fresh documentation thread. Pass `sessionID` to force a specific Gemini session.

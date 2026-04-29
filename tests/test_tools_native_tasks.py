@@ -44,11 +44,15 @@ async def test_analyze_returns_final_payload_with_run_artifacts(monkeypatch, tmp
 
     payload = json.loads(await tools.analyze("review", RecordingContext(), cwd=str(tmp_path)))
 
-    assert payload["ok"] is True
-    assert payload["response"] == "review complete"
-    assert payload["runID"]
+    assert "response" in payload
+    assert "# analyze:" in payload["response"]
+    assert "review complete" in payload["response"]
+    assert "gemini-test" in payload["response"]
+    assert payload["sessionID"] == "session-test"
     assert payload["outputPath"].endswith("result.md")
-    assert payload["reasoningTracePath"].endswith("reasoning.md")
+    assert "ok" not in payload
+    assert "runID" not in payload
+    assert "reasoningTracePath" not in payload
     assert "jobID" not in payload
 
 
@@ -91,11 +95,12 @@ async def test_agentic_tool_failure_returns_failed_payload_and_artifact(monkeypa
 
     payload = json.loads(await tools.plan("plan", RecordingContext(), cwd=str(tmp_path)))
 
-    assert payload["ok"] is False
-    assert payload["status"] == "failed"
-    assert payload["error"] == "boom"
-    assert payload["runID"]
-    assert payload["outputPath"] is None
+    assert payload["response"] == "Error: boom"
+    assert payload["error"] is True
+    assert "outputPath" not in payload
+    assert "ok" not in payload
+    assert "status" not in payload
+    assert "runID" not in payload
 
 
 @pytest.mark.asyncio
